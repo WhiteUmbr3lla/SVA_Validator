@@ -1,95 +1,118 @@
-# VPN Profile Validator
+# SVA Validator
 
-A GUI application for validating VPN profiles using Nmap as a backend. This tool helps you verify the accessibility of VPN endpoints by scanning specified IP addresses, protocols, and ports.
+A powerful network port scanning and validation tool built with Python and PyQt6, utilizing Nmap for accurate port scanning.
 
 ## Features
 
-- Load and parse CSV files containing VPN profile information
-- Display scan targets in a table format
-- Real-time scanning with Nmap
-- Two scan modes: Slow (sequential) and Aggressive (concurrent)
-- Configurable timeout per scan
-- Real-time logging of scan progress
-- Export scan results to CSV
-- Clean, responsive UI
+- **User-Friendly Interface**: Modern GUI built with PyQt6
+- **CSV Import/Export**: Load target lists from CSV and export results
+- **Multiple Scan Modes**:
+  - Slow Mode: Sequential scanning for minimal network impact
+  - Aggressive Mode: Parallel scanning for faster results
+- **Real-time Results**: Live updates with color-coded status indicators
+- **Advanced Filtering**: Filter results by IP, protocol, port, and status
+- **Comprehensive Logging**: Optional detailed logging for debugging
+- **Progress Tracking**: Real-time progress updates and scan status
+- **Error Handling**: Robust error handling and crash recovery
 
 ## Requirements
 
-- Python 3.13 or higher
-- Nmap installed on your system
-- Required Python packages (install using `pip install -r requirements.txt`):
-  - PyQt6
-  - python-nmap
-  - pandas
+- Python 3.6 or higher
+- PyQt6
+- python-nmap
+- Nmap (must be installed on your system)
 
 ## Installation
 
-1. Ensure you have Python 3.13+ installed
+1. **Install Nmap**:
+   - Download Nmap from [https://nmap.org/download.html](https://nmap.org/download.html)
+   - Run the installer as administrator
+   - During installation:
+     - Choose 'Custom' installation
+     - Check 'Add Nmap to PATH'
+     - Install to default location
+   - Restart your computer
 
-2. Install Nmap on your system:
-   - Windows:
-     1. Download the latest Nmap installer from https://nmap.org/download.html
-     2. Run the installer as administrator
-     3. During installation:
-        - Choose "Custom" installation
-        - Make sure "Add Nmap to PATH" is checked
-        - Install to the default location (C:\Program Files\Nmap)
-     4. After installation, restart your computer to ensure PATH changes take effect
-     5. Verify installation by opening Command Prompt and typing `nmap --version`
-   
-   - Linux: `sudo apt-get install nmap` (Ubuntu/Debian) or equivalent for your distribution
-   - macOS: `brew install nmap` (using Homebrew)
-
-3. Install required Python packages:
+2. **Install Python Dependencies**:
    ```bash
-   pip install -r requirements.txt
+   pip install PyQt6 python-nmap
+   ```
+
+3. **Clone or Download**:
+   ```bash
+   git clone [repository-url]
+   cd sva-validator
    ```
 
 ## Usage
 
-1. Run the application:
+1. **Start the Application**:
    ```bash
-   python vpn_validator.py
+   python sva_validator.py
    ```
 
-2. Prepare your CSV file with the following format:
-   ```
-   IP,PROTOCOL,PORT
-   192.168.1.1,TCP,443
-   10.0.0.1,UDP,1194
-   ```
+2. **Load Target List**:
+   - Click "Load CSV" to import your target list
+   - CSV format should be: `IP,Protocol,Port`
+   - Example:
+     ```
+     192.168.1.1,TCP,80
+     192.168.1.2,UDP,53
+     ```
 
-3. Use the application:
-   - Click "Load CSV" to load your VPN profile data
+3. **Configure Scan**:
    - Select scan mode (Slow/Aggressive)
-   - Set timeout value (in seconds)
-   - Click "Start Scan" to begin validation
-   - Monitor progress in the log window
-   - Export results using the "Export Results" button
+   - Enable logging if needed
+   - Click "Start Scan"
 
-## Notes
+4. **Monitor Results**:
+   - View real-time scan results in the table
+   - Use filters to focus on specific results
+   - Export results using "Export Results" button
 
-- The "Slow" mode scans one target at a time, while "Aggressive" mode scans multiple targets concurrently
-- Default timeout is 30 seconds per scan
-- Scan results show the port state (open, closed, filtered, etc.)
-- The application requires Nmap to be installed and accessible in your system PATH
+## CSV Format
 
-## Troubleshooting
+The application expects a CSV file with the following format:
+```
+IP,Protocol,Port
+192.168.1.1,TCP,80
+192.168.1.2,UDP,53
+```
 
-If you encounter issues:
-1. Ensure Nmap is properly installed and accessible from the command line
-   - Windows: Open Command Prompt and type `nmap --version`
-   - If not found, try these steps:
-     1. Uninstall Nmap
-     2. Download the latest installer
-     3. Run installer as administrator
-     4. Check "Add Nmap to PATH" during installation
-     5. Restart your computer
-2. Check that all required Python packages are installed
-3. Verify your CSV file format is correct
-4. Check the log window for detailed error messages
-5. If you see "Nmap not found" error:
-   - Make sure Nmap is installed in one of these locations:
-     - C:\Program Files\Nmap
-     - C:\Program Files (x86)\Nmap
-   - Or add Nmap's installation directory to your system PATH manually 
+## Scan Modes
+
+- **Slow Mode**: Scans one target at a time, minimizing network impact
+- **Aggressive Mode**: Scans multiple targets simultaneously (up to 20 parallel scans)
+
+## Status Indicators
+
+- 🟢 **Open**: Port is open and accepting connections
+- 🟡 **Closed**: Port is closed
+- 🟡 **Filtered**: Port is filtered (firewall)
+- 🔴 **Error**: Scan encountered an error
+- 🔴 **Stopped**: Scan was manually stopped
+- ⚪ **Pending**: Scan not yet started
+
+## Logging
+
+- Enable logging through the GUI checkbox
+- Logs are saved to `app.log`
+- Crash logs are saved to `crash_log.txt`
+
+## Error Handling
+
+The application includes comprehensive error handling:
+- Automatic crash logging
+- Graceful error recovery
+- User-friendly error messages
+- Detailed logging for debugging
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Powered by Nmap © 1996–2025 Insecure.Com LLC
+- Built with PyQt6
+- Uses python-nmap for Nmap integration 
