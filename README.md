@@ -81,8 +81,45 @@ IP,Protocol,Port
 
 ## Scan Modes
 
-- **Slow Mode**: Scans one target at a time, minimizing network impact
-- **Aggressive Mode**: Scans multiple targets simultaneously (up to 20 parallel scans)
+- **Slow Mode**: 
+  - Scans one target at a time
+  - Updates results in real-time
+  - Uses polite timing template (-T2)
+  - Adds delays between probes
+  - Minimizes network impact
+- **Aggressive Mode**: 
+  - Scans up to 20 targets simultaneously
+  - Updates results in batches (every 10 results)
+  - Uses normal timing template (-T3)
+  - No delays between probes
+  - Maximum scanning speed
+
+### Nmap Timing Templates
+
+Nmap uses timing templates (-T0 through -T5) to control scan speed and stealth:
+
+- **-T0 (Paranoid)**: Extremely slow, one probe at a time, 5 minutes between probes
+- **-T1 (Sneaky)**: Very slow, one probe at a time, 15 seconds between probes
+- **-T2 (Polite)**: Slow, one probe at a time, 400ms between probes
+- **-T3 (Normal)**: Default speed, parallel probes, no delays
+- **-T4 (Aggressive)**: Fast, parallel probes, no delays, reduced timeouts
+- **-T5 (Insane)**: Very fast, parallel probes, no delays, minimal timeouts
+
+Our application uses:
+- **Slow Mode**: -T2 (Polite) for minimal network impact
+- **Aggressive Mode**: -T3 (Normal) for balanced speed and reliability
+
+## Controls
+
+- **Start/Stop Button**: 
+  - Toggles between Start and Stop states
+  - Green when ready to start
+  - Red when scanning
+  - Automatically resets when scan completes
+- **Load CSV**: Import target list
+- **Clear Table**: Remove all results
+- **Export Results**: Save scan results to CSV
+- **Enable Logging**: Toggle detailed logging
 
 ## Status Indicators
 

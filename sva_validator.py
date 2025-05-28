@@ -10,7 +10,7 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QPushButton, QTableWidget, QTableWidgetItem,
                             QComboBox, QSpinBox, QLabel, QTextEdit, QFileDialog,
-                            QHeaderView, QMessageBox, QLineEdit, QCheckBox)
+                            QHeaderView, QMessageBox, QLineEdit, QCheckBox, QProgressBar)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QMutex, QMutexLocker
 
 # Constants
@@ -128,19 +128,20 @@ class ScanWorker(QThread):
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self, target, protocol, port, timeout):
+    def __init__(self, target, protocol, port, timeout, scan_mode="Slow"):
         super().__init__()
         self.target = target
         self.protocol = protocol
         self.port = port
         self.timeout = timeout
+        self.scan_mode = scan_mode
         self.nmap_path = find_nmap_path()
         self.start_time = None
         self._is_running = True
         self._nm = None
         self._scan_completed = False
         self._mutex = QMutex()
-        logging.debug(f"ScanWorker initialized for {target}:{port}/{protocol}")
+        logging.debug(f"ScanWorker initialized for {target}:{port}/{protocol} in {scan_mode} mode")
 
     def stop(self):
         """Safely stop the worker."""
@@ -195,19 +196,33 @@ class ScanWorker(QThread):
             # Use TCP connect scan (-sT) for TCP and UDP scan (-sU) for UDP
             scan_type = '-sT' if self.protocol.upper() == 'TCP' else '-sU'
             
-            # Add scan parameters
-            scan_args = (
-                f'{scan_type} '           # TCP connect scan or UDP scan
-                f'-p{self.port} '         # Port to scan
-                f'--host-timeout {self.timeout}s '  # Overall timeout
-                f'--max-rtt-timeout {self.timeout*1000}ms '  # Maximum RTT timeout
-                f'--min-rtt-timeout {self.timeout*100}ms '   # Minimum RTT timeout
-                f'--max-retries 2 '       # Reduce retries for faster results
-                f'--version-intensity 0 ' # Skip version detection
-                f'--max-scan-delay 0 '    # No delay between probes
-                f'-T4 '                   # Aggressive timing template
-                f'--reason '              # Show reason for port state
-            )
+            # Add scan parameters based on scan mode
+            if self.scan_mode == "Slow":
+                scan_args = (
+                    f'{scan_type} '           # TCP connect scan or UDP scan
+                    f'-p{self.port} '         # Port to scan
+                    f'--host-timeout {self.timeout}s '  # Overall timeout
+                    f'--max-rtt-timeout {self.timeout*1000}ms '  # Maximum RTT timeout
+                    f'--min-rtt-timeout {self.timeout*100}ms '   # Minimum RTT timeout
+                    f'--max-retries 3 '       # More retries for reliability
+                    f'--version-intensity 0 ' # Skip version detection
+                    f'--max-scan-delay 100ms ' # Add delay between probes
+                    f'-T2 '                   # Polite timing template
+                    f'--reason '              # Show reason for port state
+                )
+            else:  # Aggressive mode
+                scan_args = (
+                    f'{scan_type} '           # TCP connect scan or UDP scan
+                    f'-p{self.port} '         # Port to scan
+                    f'--host-timeout {self.timeout}s '  # Overall timeout
+                    f'--max-rtt-timeout {self.timeout*1000}ms '  # Maximum RTT timeout
+                    f'--min-rtt-timeout {self.timeout*100}ms '   # Minimum RTT timeout
+                    f'--max-retries 3 '       # Keep 3 retries for reliability
+                    f'--version-intensity 0 ' # Skip version detection
+                    f'--max-scan-delay 0 '    # No delay between probes
+                    f'-T3 '                   # Normal timing template
+                    f'--reason '              # Show reason for port state
+                )
             
             try:
                 self.progress.emit(f"Scanning {self.target}:{self.port}/{self.protocol}")
@@ -276,6 +291,9 @@ class SVAValidator(QMainWindow):
         self.setWindowTitle("SVA Validator")
         self.setMinimumSize(1000, 600)
         
+        # Initialize scanning state
+        self.scanning = False
+        
         # Initialize logging state
         self.logging_enabled = False
         self.setup_logging()
@@ -338,12 +356,6 @@ class SVAValidator(QMainWindow):
         self.scan_btn.clicked.connect(self.start_scan)
         controls_layout.addWidget(self.scan_btn)
         
-        # Stop scan button
-        self.stop_btn = QPushButton("Stop Scan")
-        self.stop_btn.clicked.connect(self.stop_scan)
-        self.stop_btn.setEnabled(False)
-        controls_layout.addWidget(self.stop_btn)
-        
         # Clear table button
         self.clear_btn = QPushButton("Clear Table")
         self.clear_btn.clicked.connect(self.clear_table)
@@ -361,6 +373,13 @@ class SVAValidator(QMainWindow):
         controls_layout.addWidget(self.enable_logging_cb)
         
         layout.addLayout(controls_layout)
+        
+        # Add progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        layout.addWidget(self.progress_bar)
         
         # Create filter controls
         filter_layout = QHBoxLayout()
@@ -538,127 +557,171 @@ class SVAValidator(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to load CSV: {str(e)}")
 
     def start_scan(self):
+        """Start or stop the scan process"""
         if not self.scan_data:
-            QMessageBox.warning(self, "Warning", "Please load a CSV file first")
+            QMessageBox.warning(self, "Warning", "No targets loaded. Please load a CSV file first.")
             return
-        
-        if self.is_scanning:
-            return
-        
-        self.is_scanning = True
-        self.scan_btn.setEnabled(False)
-        self.load_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        self.scan_workers = []
-        self.current_scan_index = 0
-        
-        # Start timeout checker
-        self.scan_timeout_timer.start(1000)  # Check every second
-        
-        try:
-            if self.scan_mode.currentText() == "Aggressive":
-                # Start scans in batches
-                active_workers = 0
-                for key, data in self.scan_data.items():
-                    if not self.is_scanning:
-                        break
-                        
-                    # Wait if we've reached the maximum number of parallel scans
-                    while active_workers >= MAX_PARALLEL_SCANS and self.is_scanning:
-                        active_workers = sum(1 for w in self.scan_workers if w.isRunning())
-                        if active_workers >= MAX_PARALLEL_SCANS:
-                            time.sleep(0.1)
-                    
-                    if not self.is_scanning:
-                        break
-                        
-                    worker = ScanWorker(
-                        data['ip'],
-                        data['protocol'],
-                        data['port'],
-                        DEFAULT_SCAN_TIMEOUT
-                    )
-                    worker.progress.connect(self.log)
-                    worker.scan_complete.connect(self.update_scan_result)
-                    worker.finished.connect(self.check_scan_completion)
-                    worker.error.connect(self.handle_scan_error)
-                    worker.start()
-                    self.scan_workers.append(worker)
-                    active_workers += 1
-                    
-                    time.sleep(SCAN_START_DELAY)
-            else:
-                # Start first scan in slow mode
-                self.start_next_slow_scan()
             
-            self.log("Scan started")
-        except Exception as e:
-            self.log(f"Error starting scan: {str(e)}")
+        # If already scanning, stop the scan
+        if self.scanning:
             self.stop_scan()
-
-    def start_next_slow_scan(self):
-        if self.current_scan_index >= len(self.scan_data):
-            self.check_scan_completion()
             return
+            
+        # Start new scan
+        self.scanning = True
+        self.scan_btn.setText("Stop Scan")
+        self.scan_btn.setStyleSheet("background-color: #dc3545;")
+        self.progress_bar.setValue(0)
+        self.progress_bar.setMaximum(len(self.scan_data))
         
-        # Get data from dictionary using list of keys
-        key = list(self.scan_data.keys())[self.current_scan_index]
+        # Clear previous results
+        self.results = []
+        self.update_table()
+        
+        # Create scan workers
+        self.active_workers = []
+        self.completed_count = 0
+        
+        # Set max concurrent scans based on scan mode
+        if self.scan_mode.currentText() == "Slow":
+            self.max_concurrent_scans = 1  # One at a time for slow mode
+        else:
+            self.max_concurrent_scans = MAX_PARALLEL_SCANS  # 20 concurrent scans for aggressive mode
+        
+        # Start initial batch of workers
+        for i in range(min(self.max_concurrent_scans, len(self.scan_data))):
+            self.start_next_worker()
+            
+    def start_next_worker(self):
+        """Start the next available scan worker"""
+        if not self.scanning or self.completed_count >= len(self.scan_data):
+            return
+            
+        key = list(self.scan_data.keys())[self.completed_count + len(self.active_workers)]
         data = self.scan_data[key]
         
         worker = ScanWorker(
             data['ip'],
             data['protocol'],
             data['port'],
-            DEFAULT_SCAN_TIMEOUT
+            DEFAULT_SCAN_TIMEOUT,
+            self.scan_mode.currentText()  # Pass the selected scan mode
         )
         worker.progress.connect(self.log)
-        worker.scan_complete.connect(self.update_scan_result)
-        worker.finished.connect(self.start_next_slow_scan)
+        worker.scan_complete.connect(self.handle_scan_result)
+        worker.finished.connect(self.worker_finished)
+        worker.error.connect(self.handle_scan_error)
+        
+        self.active_workers.append(worker)
         worker.start()
-        self.scan_workers.append(worker)
-        self.current_scan_index += 1
-
-    def update_scan_result(self, ip, protocol, port, status):
-        """Update scan result in the table with optimized lookup."""
-        key = f"{ip}:{protocol}:{port}"
-        if key in self.scan_data:
-            row = self.scan_data[key]['row']
-            self.scan_data[key]['status'] = status
+        
+    def worker_finished(self):
+        """Handle worker completion and start next worker"""
+        # Remove finished worker
+        sender = self.sender()
+        if sender in self.active_workers:
+            self.active_workers.remove(sender)
+            sender.deleteLater()
             
-            # Update status with colored and bold text
-            status_item = QTableWidgetItem(status)
-            font = status_item.font()
-            font.setBold(True)
-            status_item.setFont(font)
+        # Start next worker if available
+        if self.scanning and self.completed_count + len(self.active_workers) < len(self.scan_data):
+            self.start_next_worker()
             
-            # Set text color based on status
-            if status.lower() == 'open':
-                status_item.setForeground(Qt.GlobalColor.green)
-            elif status.lower() in ['closed', 'filtered']:
-                status_item.setForeground(Qt.GlobalColor.yellow)
-            elif status.lower() in ['error', 'stopped']:
-                status_item.setForeground(Qt.GlobalColor.red)
-            else:
-                status_item.setForeground(Qt.GlobalColor.black)
+        # Check if all scans are complete
+        if self.completed_count >= len(self.scan_data):
+            self.scan_complete()
             
-            self.table.setItem(row, 3, status_item)
+    def handle_scan_result(self, ip, protocol, port, state):
+        """Handle scan results with UI update optimization"""
+        self.completed_count += 1
+        self.results.append({
+            'ip': ip,
+            'protocol': protocol,
+            'port': port,
+            'state': state
+        })
+        
+        # Update progress
+        self.progress_bar.setValue(self.completed_count)
+        
+        # Update table based on scan mode
+        if self.scan_mode.currentText() == "Slow":
+            # Update table immediately for every result in slow mode
+            QTimer.singleShot(0, self.update_table)
+        else:
+            # Batch updates for aggressive mode (every 10 results)
+            if self.completed_count % 10 == 0 or self.completed_count == len(self.scan_data):
+                QTimer.singleShot(0, self.update_table)
             
-            # Trigger filter update with debounce
-            self.filter_timer.start(100)  # 100ms debounce
-
-    def check_scan_completion(self):
-        """Check if all scans are complete and update UI accordingly."""
+    def stop_scan(self):
+        """Stop all active scans"""
+        if not self.scanning:
+            return
+            
+        self.scanning = False
+        self.scan_btn.setText("Start Scan")
+        self.scan_btn.setStyleSheet("background-color: #28a745;")
+        
+        # Stop all active workers asynchronously
+        for worker in self.active_workers:
+            worker.stop()
+            
+        # Use QTimer to check worker completion periodically
+        self.stop_timer = QTimer()
+        self.stop_timer.timeout.connect(self.check_workers_stopped)
+        self.stop_timer.start(100)  # Check every 100ms
+        
+    def check_workers_stopped(self):
+        """Check if all workers have stopped and clean up"""
+        # Check if any workers are still running
+        running_workers = [w for w in self.active_workers if w.isRunning()]
+        
+        if not running_workers:
+            # All workers have stopped, clean up
+            self.stop_timer.stop()
+            for worker in self.active_workers:
+                worker.deleteLater()
+            self.active_workers.clear()
+            self.update_table()
+            self.log("Scan stopped by user")
+            
+    def update_table(self):
+        """Update the table with the current results."""
         try:
-            if all(worker.isFinished() for worker in self.scan_workers):
-                self.scan_btn.setEnabled(True)
-                self.load_btn.setEnabled(True)
-                self.stop_btn.setEnabled(False)
-                self.is_scanning = False
-                self.scan_timeout_timer.stop()
-                self.log("All scans completed")
+            self.table.setRowCount(0)
+            for result in self.results:
+                self.table.insertRow(self.table.rowCount())
+                self.table.setItem(self.table.rowCount() - 1, 0, QTableWidgetItem(result['ip']))
+                self.table.setItem(self.table.rowCount() - 1, 1, QTableWidgetItem(result['protocol']))
+                self.table.setItem(self.table.rowCount() - 1, 2, QTableWidgetItem(result['port']))
+                
+                # Create status item with color and bold text
+                status_item = QTableWidgetItem(result['state'])
+                font = status_item.font()
+                font.setBold(True)
+                status_item.setFont(font)
+                
+                # Set text color based on status
+                if result['state'].lower() == 'open':
+                    status_item.setForeground(Qt.GlobalColor.green)
+                elif result['state'].lower() in ['closed', 'filtered']:
+                    status_item.setForeground(Qt.GlobalColor.yellow)
+                elif result['state'].lower() in ['error', 'stopped', 'timeout']:
+                    status_item.setForeground(Qt.GlobalColor.red)
+                else:
+                    status_item.setForeground(Qt.GlobalColor.black)
+                
+                self.table.setItem(self.table.rowCount() - 1, 3, status_item)
         except Exception as e:
-            self.log(f"Error checking scan completion: {str(e)}")
-            self.stop_scan()
+            self.log(f"Error updating table: {str(e)}")
+
+    def scan_complete(self):
+        """Handle scan completion."""
+        self.scanning = False
+        self.scan_btn.setText("Start Scan")
+        self.scan_btn.setStyleSheet("background-color: #28a745;")
+        self.scan_timeout_timer.stop()
+        self.log("All scans completed")
 
     def handle_scan_error(self, error_msg):
         """Handle scan errors."""
@@ -666,8 +729,8 @@ class SVAValidator(QMainWindow):
         # Don't stop the scan on individual errors, just log them
 
     def export_results(self):
-        if not self.scan_data:
-            QMessageBox.warning(self, "Warning", "No data to export")
+        if not self.results:
+            QMessageBox.warning(self, "Warning", "No scan results to export")
             return
         
         try:
@@ -679,44 +742,17 @@ class SVAValidator(QMainWindow):
                     writer = csv.writer(file)
                     writer.writerow(['IP', 'Protocol', 'Port', 'Status'])
                     
-                    for key, data in self.scan_data.items():
+                    for result in self.results:
                         writer.writerow([
-                            data['ip'],
-                            data['protocol'],
-                            data['port'],
-                            data['status']
+                            result['ip'],
+                            result['protocol'],
+                            result['port'],
+                            result['state']
                         ])
                 
                 self.log(f"Results exported to {file_name}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to export results: {str(e)}")
-
-    def stop_scan(self):
-        """Stop all ongoing scans."""
-        if not self.is_scanning:
-            return
-            
-        self.log("Stopping all scans...")
-        with QMutexLocker(self._scan_mutex):
-            # First stop all workers
-            for worker in self._scan_workers:
-                if worker.isRunning():
-                    worker.stop()
-            
-            # Then wait for them to finish
-            for worker in self._scan_workers:
-                if worker.isRunning():
-                    worker.wait()
-            
-            # Finally clear the list
-            self._scan_workers = []
-        
-        self.is_scanning = False
-        self.scan_btn.setEnabled(True)
-        self.load_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.scan_timeout_timer.stop()
-        self.log("All scans stopped")
 
     def clear_table(self):
         """Clear all results from the table."""
