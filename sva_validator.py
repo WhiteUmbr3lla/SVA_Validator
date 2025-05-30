@@ -770,32 +770,27 @@ class SVAValidator(QMainWindow):
         protocol_filter = self.protocol_filter.currentText()
         ip_filter = self.ip_filter.text().strip()
         port_filter = self.port_filter.text().strip()
-        
-        # Show all rows first
+
         for row in range(self.table.rowCount()):
-            self.table.setRowHidden(row, False)
-        
-        # Apply filters
-        for key, data in self.scan_data.items():
-            row = data['row']
             should_hide = False
-            
+            ip = self.table.item(row, 0).text() if self.table.item(row, 0) else ''
+            protocol = self.table.item(row, 1).text() if self.table.item(row, 1) else ''
+            port = self.table.item(row, 2).text() if self.table.item(row, 2) else ''
+            status = self.table.item(row, 3).text() if self.table.item(row, 3) else ''
+
             # IP filter
-            if ip_filter and ip_filter not in data['ip']:
+            if ip_filter and ip_filter not in ip:
                 should_hide = True
-            
             # Protocol filter
-            if not should_hide and protocol_filter != "All" and data['protocol'] != protocol_filter:
+            if not should_hide and protocol_filter != "All" and protocol.upper() != protocol_filter.upper():
                 should_hide = True
-            
             # Port filter
-            if not should_hide and port_filter and port_filter not in data['port']:
+            if not should_hide and port_filter and port_filter not in port:
                 should_hide = True
-            
             # Status filter
-            if not should_hide and status_filter != "All" and data['status'].lower() != status_filter.lower():
+            if not should_hide and status_filter != "All" and status.lower() != status_filter.lower():
                 should_hide = True
-            
+
             self.table.setRowHidden(row, should_hide)
 
 if __name__ == '__main__':
